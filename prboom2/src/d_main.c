@@ -114,7 +114,7 @@ dboolean nomonsters;     // working -nomonsters
 dboolean respawnparm;    // working -respawn
 dboolean fastparm;       // working -fast
 
-dboolean singletics = false; // debug flag to cancel adaptiveness
+dboolean singletics = true; // debug flag to cancel adaptiveness
 
 //jff 1/22/98 parms for disabling music and sound
 dboolean nosfxparm;
@@ -685,11 +685,11 @@ void D_DoAdvanceDemo(void)
 
   if (netgame && !demoplayback) {
     demosequence = 0;
-  } else
-   if (!demostates[++demosequence][gamemode].func)
+  } else if (!demostates[++demosequence][gamemode].func) {
     demosequence = 0;
-  demostates[demosequence][gamemode].func
-    (demostates[demosequence][gamemode].name);
+  }
+
+  demostates[demosequence][gamemode].func(demostates[demosequence][gamemode].name);
 }
 
 //

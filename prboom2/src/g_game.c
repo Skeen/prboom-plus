@@ -441,6 +441,7 @@ void G_BuildTiccmd(ticcmd_t* cmd)
   int forward;
   int side;
   int newweapon;                                          // phares
+
   /* cphipps - remove needless I_BaseTiccmd call, just set the ticcmd to zero */
   memset(cmd,0,sizeof*cmd);
   cmd->consistancy = consistancy[consoleplayer][maketic%BACKUPTICS];
@@ -2819,33 +2820,112 @@ void G_InitNew(skill_t skill, int episode, int map)
 //
 // DEMO RECORDING
 //
+#include <unistd.h>
+#include <curl/curl.h>
+
+unsigned int frame_counter = 0;
+
+
+struct string {
+  char *ptr;
+  size_t len;
+};
+
+void init_string(struct string *s) {
+  s->len = 0;
+  s->ptr = malloc(s->len+1);
+  if (s->ptr == NULL) {
+    fprintf(stderr, "malloc() failed\n");
+    exit(EXIT_FAILURE);
+  }
+  s->ptr[0] = '\0';
+}
+
+size_t writefunc(void *ptr, size_t size, size_t nmemb, struct string *s)
+{
+  size_t new_len = s->len + size*nmemb;
+  s->ptr = realloc(s->ptr, new_len+1);
+  if (s->ptr == NULL) {
+    fprintf(stderr, "realloc() failed\n");
+    exit(EXIT_FAILURE);
+  }
+  memcpy(s->ptr+s->len, ptr, size*nmemb);
+  s->ptr[new_len] = '\0';
+  s->len = new_len;
+
+  return size*nmemb;
+}
 
 void G_ReadOneTick(ticcmd_t* cmd, const byte **data_p)
 {
-  unsigned char at = 0; // e6y: for tasdoom demo format
+  int x;
+  int y;
+  int z;
+  int a;
 
-  cmd->forwardmove = (signed char)(*(*data_p)++);
-  cmd->sidemove = (signed char)(*(*data_p)++);
-  if (!longtics)
-  {
-    cmd->angleturn = ((unsigned char)(at = *(*data_p)++))<<8;
+  int matched;
+
+  unsigned char do_exit;
+  char buffer[200];
+  struct string s;
+
+  CURL *curl;
+  CURLcode res;
+
+  curl_global_init(CURL_GLOBAL_ALL);
+  curl = curl_easy_init();
+
+  init_string(&s);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writefunc);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &s);
+
+  curl_easy_setopt(curl, CURLOPT_URL, "http://localhost:5123/tick");
+
+  // Read out player position
+  x = players[consoleplayer].mo->x >> FRACBITS;
+  y = players[consoleplayer].mo->y >> FRACBITS;
+  z = players[consoleplayer].mo->z >> FRACBITS;
+  a = players[consoleplayer].mo->angle * (90.0/ANG90);
+  lprintf(LO_INFO, "Position (%d,%d,%d) - a: %d\n", x, y, z, a);
+
+  if (curl) {
+    // Construct post body
+    sprintf(buffer, "f=%d&x=%d&y=%d&z=%d&a=%d", frame_counter, x, y, z, a);
+    lprintf(LO_INFO, "buffer: %s\n", buffer);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, buffer);
+
+    // Fire the request
+    res = curl_easy_perform(curl);
+    if(res != CURLE_OK) {
+      lprintf(LO_INFO, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+      exit(1);
+    }
+
+    // Parse the response
+    lprintf(LO_INFO, "response: %s\n", s.ptr);
+    matched = sscanf(s.ptr, "\"%hhi %hhi %hd %hhd %hhd\"", &cmd->forwardmove, &cmd->sidemove, &cmd->angleturn, &cmd->buttons, &do_exit);
+    lprintf(LO_INFO, "matched: %d\n", matched);
+    if (matched != 5) {
+        exit(1);
+    }
+
+    lprintf(LO_INFO, "\nREPLY for %d\n", frame_counter);
+    lprintf(LO_INFO, "forward %d\n", cmd->forwardmove);
+    lprintf(LO_INFO, "side %d\n", cmd->sidemove);
+    lprintf(LO_INFO, "angle %d\n", cmd->angleturn);
+    lprintf(LO_INFO, "buttons %d\n", cmd->buttons);
+    lprintf(LO_INFO, "do_exit %d\n", do_exit);
+
+    curl_easy_cleanup(curl);
   }
-  else
-  {
-    unsigned int lowbyte = (unsigned char)(*(*data_p)++);
-    cmd->angleturn = (((signed int)(*(*data_p)++))<<8) + lowbyte;
+  curl_global_cleanup();
+
+  free(s.ptr);
+  if (do_exit == 1) {
+    exit(0);
   }
-  cmd->buttons = (unsigned char)(*(*data_p)++);
-  
-  // e6y: ability to play tasdoom demos directly
-  if (compatibility_level == tasdoom_compatibility)
-  {
-    signed char tmp = cmd->forwardmove;
-    cmd->forwardmove = cmd->sidemove;
-    cmd->sidemove = (signed char)at;
-    cmd->angleturn = ((unsigned char)cmd->buttons)<<8;
-    cmd->buttons = (byte)tmp;
-  }
+
+  frame_counter++;
 }
 
 void G_ReadDemoTiccmd (ticcmd_t* cmd)
